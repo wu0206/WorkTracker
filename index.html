@@ -3,10 +3,11 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工作時間規劃與追蹤系統 v3.2 (除錯增強版)</title>
+    <title>工作時間規劃與追蹤系統 v3.3 (結構修復版)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/locale/zh-tw.min.js"></script>
+    
     <script type="text/javascript" src="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.js"></script>
     <link href="https://unpkg.com/vis-timeline/styles/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css" />
     
@@ -23,12 +24,13 @@
         .vis-item { border-radius: 4px; font-size: 14px; }
         .editing-mode { border: 2px solid #f59e0b; background-color: #fffbeb; }
         
+        /* 遮罩樣式 */
         #loadingOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(255,255,255,0.9); z-index: 9999;
+            background: rgba(255,255,255,0.95); z-index: 9999;
             display: flex; justify-content: center; align-items: center;
             flex-direction: column;
-            color: #555;
+            color: #333;
         }
     </style>
 </head>
@@ -36,15 +38,11 @@
 
     <div id="loadingOverlay">
         <div class="text-2xl font-bold mb-4">☁️ 雲端資料連線中...</div>
-        <div id="loadingMsg" class="text-sm text-gray-500">正在嘗試連接資料庫，請稍候...</div>
-        <div id="errorActions" class="mt-6 hidden">
-            <p class="text-red-500 font-bold mb-2">連線似乎有問題？</p>
-            <ul class="text-left text-sm text-gray-700 list-disc pl-5 mb-4 space-y-1">
-                <li>請檢查是否開啟了 <b>AdBlock</b> 或擋廣告軟體 (請先關閉)</li>
-                <li>請確認網路是否正常</li>
-                <li>請確認 Firebase 後台規則是否已改為 <b>true</b></li>
-            </ul>
-            <button onclick="location.reload()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow">重新整理頁面</button>
+        <div id="loadingMsg" class="text-sm text-gray-500">正在同步資料，請稍候...</div>
+        <div id="errorActions" class="mt-6 hidden text-center">
+            <p class="text-red-500 font-bold mb-2">發生錯誤</p>
+            <p id="errorDetail" class="text-xs text-gray-600 mb-4 max-w-md break-all"></p>
+            <button onclick="location.reload()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow">重新整理</button>
         </div>
     </div>
 
@@ -52,7 +50,7 @@
         <header class="mb-6 flex justify-between items-end">
             <div>
                 <h1 class="text-3xl font-bold text-gray-800">☁️ 雲端工作追蹤系統</h1>
-                <p class="text-gray-600">除錯增強版：如果連線失敗會顯示具體原因</p>
+                <p class="text-gray-600">v3.3 結構修復版</p>
             </div>
             <div id="connectionStatus" class="text-sm font-bold text-gray-400">初始化中...</div>
         </header>
@@ -136,7 +134,11 @@
     </div>
 
     <script>
-        // --- 您的 Firebase 設定 ---
+        // ==========================================
+        //  1. 全域變數與設定
+        // ==========================================
+        
+        // Firebase 設定
         const firebaseConfig = {
             apiKey: "AIzaSyB7coN0YZ5XFvSG4vrD4rvLRGSVH_kmCxY",
             authDomain: "worktracker-41d89.firebaseapp.com",
@@ -147,98 +149,100 @@
             appId: "1:182899210000:web:d86f11e118e6fb68e75795"
         };
 
-        // --- 初始化 Firebase ---
-        let db;
-        
-        // 設定一個 8 秒的計時器，如果太久沒反應就顯示「重試按鈕」
-        const loadingTimeout = setTimeout(() => {
-            const overlay = document.getElementById('loadingOverlay');
-            if(overlay && overlay.style.display !== 'none') {
-                document.getElementById('loadingMsg').innerText = "⚠️ 連線回應時間過長...";
-                document.getElementById('errorActions').classList.remove('hidden');
-            }
-        }, 8000);
-
-        try {
-            firebase.initializeApp(firebaseConfig);
-            db = firebase.database();
-            
-            document.getElementById('connectionStatus').innerText = "🟢 已連線至雲端";
-            document.getElementById('connectionStatus').classList.replace('text-gray-400', 'text-green-600');
-        } catch (e) {
-            console.error(e);
-            showError("Firebase 初始化失敗：" + e.message);
-        }
-
-        // --- 全域變數 ---
+        // 變數
+        let db = null;
         let jobs = [];
-        let timeline;
-        let items;
-        let groups;
+        let timeline, items, groups;
+        let loadingTimeout;
 
-        // --- 程式進入點 ---
-        document.addEventListener('DOMContentLoaded', function() {
-            moment.locale('zh-tw');
-            initTimeline();
-            setDefaultTimes();
+        // ==========================================
+        //  2. 核心功能函式 (先定義，確保不會找不到)
+        // ==========================================
 
-            // 監聽雲端資料庫變化 (包含錯誤處理)
-            if(db) {
-                const jobsRef = db.ref('workJobs');
-                
-                // 使用 on 的第二個參數來捕捉錯誤
-                jobsRef.on('value', (snapshot) => {
-                    // --- 成功取得資料 ---
-                    clearTimeout(loadingTimeout); // 清除超時警告
-                    
-                    const data = snapshot.val();
-                    if (data) {
-                        jobs = Array.isArray(data) ? data : Object.values(data);
-                        jobs = jobs.filter(j => j != null);
-                    } else {
-                        jobs = [];
-                    }
-                    refreshTimelineData();
-                    renderTable();
-                    
-                    // 關閉遮罩
-                    document.getElementById('loadingOverlay').style.display = 'none';
-
-                }, (error) => {
-                    // --- 發生錯誤 (權限不足或被擋) ---
-                    clearTimeout(loadingTimeout);
-                    console.error("Firebase 讀取錯誤:", error);
-                    
-                    let errorMsg = "讀取資料庫失敗！";
-                    if (error.code === 'PERMISSION_DENIED') {
-                        errorMsg = "❌ 權限被拒絕 (PERMISSION_DENIED)。\n請至 Firebase Console > Realtime Database > 規則 (Rules)，將 read 和 write 都設為 true。";
-                    } else {
-                        errorMsg = "❌ 連線錯誤: " + error.message;
-                    }
-                    showError(errorMsg);
-                });
-            }
-        });
-
-        // 顯示錯誤訊息在畫面上
+        // 顯示錯誤訊息
         function showError(msg) {
-            document.getElementById('loadingMsg').innerText = msg;
+            document.getElementById('loadingMsg').innerText = "發生錯誤！";
             document.getElementById('loadingMsg').classList.add('text-red-600', 'font-bold');
+            document.getElementById('errorDetail').innerText = msg;
             document.getElementById('errorActions').classList.remove('hidden');
-            alert(msg); // 同時彈出視窗提醒
         }
 
-        // --- 設定預設時間 ---
-        function setDefaultTimes() {
-            const now = new Date();
-            const todayDate = moment(now).format('YYYY-MM-DD');
-            document.getElementById('estStart').value = `${todayDate}T08:00`;
-            document.getElementById('estEnd').value = `${todayDate}T17:00`;
-            document.getElementById('actStart').value = '';
-            document.getElementById('actEnd').value = '';
+        // 刷新時間軸資料
+        function refreshTimelineData() {
+            if(!groups || !items) return;
+            groups.clear();
+            items.clear();
+            
+            jobs.forEach(job => {
+                groups.add({ id: job.id, content: `<span style="font-weight:bold">${job.title}</span>` });
+
+                items.add({
+                    id: job.id + '_est',
+                    group: job.id,
+                    content: '預計',
+                    start: job.estStart,
+                    end: job.estEnd,
+                    className: 'expected',
+                    title: `預計: ${job.estStart} ~ ${job.estEnd}`
+                });
+
+                if (job.actStart && job.actEnd) {
+                    items.add({
+                        id: job.id + '_act',
+                        group: job.id,
+                        content: '實際',
+                        start: job.actStart,
+                        end: job.actEnd,
+                        className: 'actual',
+                        title: `實際: ${job.actStart} ~ ${job.actEnd}`
+                    });
+                }
+            });
+            
+            if(jobs.length > 0) timeline.fit();
         }
 
-        // --- 時間軸初始化 ---
+        // 刷新表格資料
+        function renderTable() {
+            const tbody = document.getElementById('jobTableBody');
+            tbody.innerHTML = '';
+            const sortedJobs = [...jobs].sort((a, b) => new Date(b.estStart) - new Date(a.estStart));
+
+            sortedJobs.forEach(job => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td class="px-3 py-4 whitespace-nowrap text-sm font-medium">
+                        <button onclick="loadJobToEdit(${job.id})" class="text-indigo-600 hover:text-indigo-900 mr-3 bg-indigo-50 px-2 py-1 rounded">編輯</button>
+                        <button onclick="deleteJob(${job.id})" class="text-red-600 hover:text-red-900 bg-red-50 px-2 py-1 rounded">刪除</button>
+                    </td>
+                    <td class="px-3 py-4 font-medium text-gray-900">${job.title}</td>
+                    <td class="px-3 py-4 text-gray-500 max-w-xs truncate" title="${job.content}">${job.content}</td>
+                    <td class="px-3 py-4 text-gray-500 text-xs">
+                        ${formatDate(job.estStart)}<br>↓<br>${formatDate(job.estEnd)}
+                    </td>
+                    <td class="px-3 py-4 text-gray-500 text-xs">
+                        ${(job.actStart && job.actEnd) ? 
+                          formatDate(job.actStart) + '<br>↓<br>' + formatDate(job.actEnd) : 
+                          '<span class="text-gray-300">待填寫</span>'}
+                    </td>
+                    <td class="px-3 py-4 text-gray-500 text-xs">${job.remarks}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // 儲存資料到雲端
+        function saveDataToCloud(newJobsData) {
+            if(!db) return;
+            db.ref('workJobs').set(newJobsData)
+                .then(() => console.log("同步成功"))
+                .catch((err) => {
+                    console.error(err);
+                    alert("儲存失敗！\n錯誤: " + err.message);
+                });
+        }
+
+        // 初始化時間軸元件
         function initTimeline() {
             const container = document.getElementById('visualization');
             groups = new vis.DataSet();
@@ -253,7 +257,7 @@
                 zoomKey: 'ctrlKey',
                 maxHeight: '500px',
                 verticalScroll: true,
-                locale: 'zh-tw',
+                locale: 'zh-tw', // 若出現 locale 警告可忽略，不影響功能
                 format: {
                     minorLabels: { minute: 'HH:mm', hour: 'HH:mm', weekday: 'M/D (ddd)', day: 'M/D (ddd)', month: 'YYYY年 M月' },
                     majorLabels: { minute: 'ddd D HH:mm', hour: 'ddd D HH:mm', weekday: 'YYYY年 M月', day: 'YYYY年 M月', month: 'YYYY年' }
@@ -263,6 +267,7 @@
 
             timeline = new vis.Timeline(container, items, groups, options);
             
+            // 拖曳時間軸後的更新
             items.on('update', function (event, properties) {
                 if (properties.data && properties.data.length > 0) {
                     updateJobFromTimeline(properties.data[0]);
@@ -270,9 +275,39 @@
             });
         }
 
-        // --- 表單提交 ---
+        function updateJobFromTimeline(item) {
+            const jobId = parseInt(item.group);
+            const type = item.id.split('_')[1];
+            const jobIndex = jobs.findIndex(j => j.id === jobId);
+            
+            if (jobIndex > -1) {
+                const toLocalISO = (date) => {
+                    const tzOffset = date.getTimezoneOffset() * 60000;
+                    return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
+                };
+
+                let updatedJobs = [...jobs];
+                let job = {...updatedJobs[jobIndex]};
+                if (type === 'est') {
+                    job.estStart = toLocalISO(item.start);
+                    job.estEnd = toLocalISO(item.end);
+                } else if (type === 'act') {
+                    job.actStart = toLocalISO(item.start);
+                    job.actEnd = toLocalISO(item.end);
+                }
+                updatedJobs[jobIndex] = job;
+                saveDataToCloud(updatedJobs);
+                
+                // 若正在編輯這筆，也同步更新表單
+                if(document.getElementById('editJobId').value == jobId) {
+                    loadJobToEdit(jobId);
+                }
+            }
+        }
+
+        // 表單提交
         function handleFormSubmit() {
-            if(!db) { alert("尚未連線到資料庫，無法儲存"); return; }
+            if(!db) { alert("尚未連線到資料庫"); return; }
             
             const idInput = document.getElementById('editJobId').value;
             const title = document.getElementById('jobTitle').value;
@@ -309,16 +344,7 @@
             resetForm();
         }
 
-        function saveDataToCloud(newJobsData) {
-            db.ref('workJobs').set(newJobsData)
-                .then(() => console.log("同步成功"))
-                .catch((err) => {
-                    console.error(err);
-                    alert("儲存失敗！\n錯誤: " + err.message + "\n(請檢查是否有權限寫入)");
-                });
-        }
-
-        // --- 編輯 ---
+        // 載入編輯
         function loadJobToEdit(id) {
             const job = jobs.find(j => j.id === id);
             if (!job) return;
@@ -344,6 +370,7 @@
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
+        // 重置表單
         function resetForm() {
             document.getElementById('editJobId').value = '';
             document.getElementById('jobTitle').value = '';
@@ -362,6 +389,7 @@
             document.getElementById('inputFormCard').classList.remove('editing-mode');
         }
 
+        // 刪除工作
         function deleteJob(id) {
             if(!db) return;
             if(confirm('確定要刪除這項工作嗎？')) {
@@ -371,6 +399,7 @@
             }
         }
 
+        // 清除所有資料
         function clearAllData() {
             if(!db) return;
             if(confirm('警告：這將會清除「雲端」所有資料且無法復原。確定嗎？')) {
@@ -379,11 +408,85 @@
             }
         }
 
+        // 工具函式
+        function setDefaultTimes() {
+            const now = new Date();
+            const todayDate = moment(now).format('YYYY-MM-DD');
+            document.getElementById('estStart').value = `${todayDate}T08:00`;
+            document.getElementById('estEnd').value = `${todayDate}T17:00`;
+            document.getElementById('actStart').value = '';
+            document.getElementById('actEnd').value = '';
+        }
+
         function formatDate(dateString) {
             if (!dateString) return '';
             const d = new Date(dateString);
             return `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
         }
+
+        // ==========================================
+        //  3. 程式進入點 (執行邏輯)
+        // ==========================================
+        document.addEventListener('DOMContentLoaded', function() {
+            // 設定語系
+            moment.locale('zh-tw');
+            
+            // 設定超時警告
+            loadingTimeout = setTimeout(() => {
+                const overlay = document.getElementById('loadingOverlay');
+                if(overlay && overlay.style.display !== 'none') {
+                    showError("連線時間過長，可能是網路問題或被擋廣告軟體阻擋。");
+                }
+            }, 10000);
+
+            // 初始化 UI
+            initTimeline();
+            setDefaultTimes();
+
+            // 連接 Firebase
+            try {
+                firebase.initializeApp(firebaseConfig);
+                db = firebase.database();
+                
+                document.getElementById('connectionStatus').innerText = "🟢 已連線至雲端";
+                document.getElementById('connectionStatus').classList.replace('text-gray-400', 'text-green-600');
+
+                // 監聽資料
+                const jobsRef = db.ref('workJobs');
+                jobsRef.on('value', (snapshot) => {
+                    clearTimeout(loadingTimeout); // 成功連上，清除計時
+                    
+                    const data = snapshot.val();
+                    if (data) {
+                        jobs = Array.isArray(data) ? data : Object.values(data);
+                        jobs = jobs.filter(j => j != null);
+                    } else {
+                        jobs = [];
+                    }
+                    
+                    // 這裡呼叫剛剛定義好的函式
+                    refreshTimelineData();
+                    renderTable();
+                    
+                    // 關閉遮罩
+                    document.getElementById('loadingOverlay').style.display = 'none';
+
+                }, (error) => {
+                    clearTimeout(loadingTimeout);
+                    console.error("Firebase Error:", error);
+                    let msg = "連線失敗: " + error.message;
+                    if (error.code === 'PERMISSION_DENIED') {
+                        msg = "權限不足 (PERMISSION_DENIED)。請確認 Firebase 後台規則已設為 true。";
+                    }
+                    showError(msg);
+                });
+
+            } catch (e) {
+                clearTimeout(loadingTimeout);
+                console.error(e);
+                showError("初始化失敗：" + e.message);
+            }
+        });
     </script>
 </body>
 </html>
