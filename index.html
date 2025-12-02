@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工作時間規劃與追蹤系統 v3.1 (正式連線版)</title>
+    <title>工作時間規劃與追蹤系統 v3.2 (除錯增強版)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/locale/zh-tw.min.js"></script>
@@ -25,18 +25,26 @@
         
         #loadingOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
-            background: rgba(255,255,255,0.8); z-index: 9999;
+            background: rgba(255,255,255,0.9); z-index: 9999;
             display: flex; justify-content: center; align-items: center;
-            font-size: 20px; font-weight: bold; color: #555;
+            flex-direction: column;
+            color: #555;
         }
     </style>
 </head>
 <body class="p-6">
 
     <div id="loadingOverlay">
-        <div class="text-center">
-            <div class="mb-2">☁️ 雲端資料連線中...</div>
-            <div class="text-sm text-gray-500 font-normal">若卡住超過 10 秒，請檢查網路連線</div>
+        <div class="text-2xl font-bold mb-4">☁️ 雲端資料連線中...</div>
+        <div id="loadingMsg" class="text-sm text-gray-500">正在嘗試連接資料庫，請稍候...</div>
+        <div id="errorActions" class="mt-6 hidden">
+            <p class="text-red-500 font-bold mb-2">連線似乎有問題？</p>
+            <ul class="text-left text-sm text-gray-700 list-disc pl-5 mb-4 space-y-1">
+                <li>請檢查是否開啟了 <b>AdBlock</b> 或擋廣告軟體 (請先關閉)</li>
+                <li>請確認網路是否正常</li>
+                <li>請確認 Firebase 後台規則是否已改為 <b>true</b></li>
+            </ul>
+            <button onclick="location.reload()" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow">重新整理頁面</button>
         </div>
     </div>
 
@@ -44,9 +52,9 @@
         <header class="mb-6 flex justify-between items-end">
             <div>
                 <h1 class="text-3xl font-bold text-gray-800">☁️ 雲端工作追蹤系統</h1>
-                <p class="text-gray-600">多人協作版：任何人的修改都會即時同步到所有裝置</p>
+                <p class="text-gray-600">除錯增強版：如果連線失敗會顯示具體原因</p>
             </div>
-            <div id="connectionStatus" class="text-sm font-bold text-gray-400">連線中...</div>
+            <div id="connectionStatus" class="text-sm font-bold text-gray-400">初始化中...</div>
         </header>
 
         <div id="inputFormCard" class="bg-white p-6 rounded-lg shadow mb-6 transition-colors duration-300">
@@ -128,9 +136,7 @@
     </div>
 
     <script>
-        // -------------------------------------------------------------
-        //  ✅ 您的 Firebase 設定已自動填入
-        // -------------------------------------------------------------
+        // --- 您的 Firebase 設定 ---
         const firebaseConfig = {
             apiKey: "AIzaSyB7coN0YZ5XFvSG4vrD4rvLRGSVH_kmCxY",
             authDomain: "worktracker-41d89.firebaseapp.com",
@@ -143,6 +149,16 @@
 
         // --- 初始化 Firebase ---
         let db;
+        
+        // 設定一個 8 秒的計時器，如果太久沒反應就顯示「重試按鈕」
+        const loadingTimeout = setTimeout(() => {
+            const overlay = document.getElementById('loadingOverlay');
+            if(overlay && overlay.style.display !== 'none') {
+                document.getElementById('loadingMsg').innerText = "⚠️ 連線回應時間過長...";
+                document.getElementById('errorActions').classList.remove('hidden');
+            }
+        }, 8000);
+
         try {
             firebase.initializeApp(firebaseConfig);
             db = firebase.database();
@@ -151,9 +167,7 @@
             document.getElementById('connectionStatus').classList.replace('text-gray-400', 'text-green-600');
         } catch (e) {
             console.error(e);
-            document.getElementById('connectionStatus').innerText = "🔴 連線失敗";
-            document.getElementById('connectionStatus').classList.replace('text-gray-400', 'text-red-600');
-            alert("連線錯誤：" + e.message);
+            showError("Firebase 初始化失敗：" + e.message);
         }
 
         // --- 全域變數 ---
@@ -168,10 +182,15 @@
             initTimeline();
             setDefaultTimes();
 
-            // 監聽雲端資料庫變化
+            // 監聽雲端資料庫變化 (包含錯誤處理)
             if(db) {
                 const jobsRef = db.ref('workJobs');
+                
+                // 使用 on 的第二個參數來捕捉錯誤
                 jobsRef.on('value', (snapshot) => {
+                    // --- 成功取得資料 ---
+                    clearTimeout(loadingTimeout); // 清除超時警告
+                    
                     const data = snapshot.val();
                     if (data) {
                         jobs = Array.isArray(data) ? data : Object.values(data);
@@ -181,12 +200,33 @@
                     }
                     refreshTimelineData();
                     renderTable();
+                    
+                    // 關閉遮罩
                     document.getElementById('loadingOverlay').style.display = 'none';
+
+                }, (error) => {
+                    // --- 發生錯誤 (權限不足或被擋) ---
+                    clearTimeout(loadingTimeout);
+                    console.error("Firebase 讀取錯誤:", error);
+                    
+                    let errorMsg = "讀取資料庫失敗！";
+                    if (error.code === 'PERMISSION_DENIED') {
+                        errorMsg = "❌ 權限被拒絕 (PERMISSION_DENIED)。\n請至 Firebase Console > Realtime Database > 規則 (Rules)，將 read 和 write 都設為 true。";
+                    } else {
+                        errorMsg = "❌ 連線錯誤: " + error.message;
+                    }
+                    showError(errorMsg);
                 });
-            } else {
-                document.getElementById('loadingOverlay').style.display = 'none';
             }
         });
+
+        // 顯示錯誤訊息在畫面上
+        function showError(msg) {
+            document.getElementById('loadingMsg').innerText = msg;
+            document.getElementById('loadingMsg').classList.add('text-red-600', 'font-bold');
+            document.getElementById('errorActions').classList.remove('hidden');
+            alert(msg); // 同時彈出視窗提醒
+        }
 
         // --- 設定預設時間 ---
         function setDefaultTimes() {
@@ -272,7 +312,10 @@
         function saveDataToCloud(newJobsData) {
             db.ref('workJobs').set(newJobsData)
                 .then(() => console.log("同步成功"))
-                .catch((err) => alert("同步失敗：" + err.message));
+                .catch((err) => {
+                    console.error(err);
+                    alert("儲存失敗！\n錯誤: " + err.message + "\n(請檢查是否有權限寫入)");
+                });
         }
 
         // --- 編輯 ---
