@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工作時間規劃與追蹤系統 v3.4 (穩定修復版)</title>
+    <title>工作時間規劃與追蹤系統 v3.5 (24H制修復版)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/locale/zh-tw.min.js"></script>
@@ -13,6 +13,10 @@
     
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://npmcdn.com/flatpickr/dist/l10n/zh-tw.js"></script>
 
     <script src="https://cdn.tailwindcss.com"></script>
 
@@ -32,6 +36,8 @@
             flex-direction: column;
             color: #333;
         }
+        /* 修正 Flatpickr 輸入框樣式 */
+        input.flatpickr-input { background-color: white; }
     </style>
 </head>
 <body class="p-6">
@@ -50,7 +56,7 @@
         <header class="mb-6 flex justify-between items-end">
             <div>
                 <h1 class="text-3xl font-bold text-gray-800">☁️ 雲端工作追蹤系統</h1>
-                <p class="text-gray-600">v3.4 穩定修復版</p>
+                <p class="text-gray-600">v3.5 正式版 (24小時制)</p>
             </div>
             <div id="connectionStatus" class="text-sm font-bold text-gray-400">初始化中...</div>
         </header>
@@ -83,22 +89,22 @@
                     <div class="grid grid-cols-2 gap-2">
                         <div>
                             <label class="block text-sm font-bold text-blue-700">🔵 預計開始 <span class="text-red-500">*</span></label>
-                            <input type="datetime-local" id="estStart" class="mt-1 block w-full rounded border-gray-300 p-1">
+                            <input type="text" id="estStart" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-white" placeholder="點擊選擇時間">
                         </div>
                         <div>
                             <label class="block text-sm font-bold text-blue-700">預計結束 <span class="text-red-500">*</span></label>
-                            <input type="datetime-local" id="estEnd" class="mt-1 block w-full rounded border-gray-300 p-1">
+                            <input type="text" id="estEnd" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-white" placeholder="點擊選擇時間">
                         </div>
                     </div>
                     <hr class="border-gray-300">
                     <div class="grid grid-cols-2 gap-2">
                         <div>
                             <label class="block text-sm font-bold text-green-700">🟢 實際開始 (選填)</label>
-                            <input type="datetime-local" id="actStart" class="mt-1 block w-full rounded border-gray-300 p-1">
+                            <input type="text" id="actStart" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-white" placeholder="點擊選擇時間">
                         </div>
                         <div>
                             <label class="block text-sm font-bold text-green-700">實際結束 (選填)</label>
-                            <input type="datetime-local" id="actEnd" class="mt-1 block w-full rounded border-gray-300 p-1">
+                            <input type="text" id="actEnd" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-white" placeholder="點擊選擇時間">
                         </div>
                     </div>
                 </div>
@@ -135,10 +141,9 @@
 
     <script>
         // ==========================================
-        //  1. 全域設定與變數
+        //  1. 變數與設定
         // ==========================================
         
-        // 您的 Firebase Config (已填入)
         const firebaseConfig = {
             apiKey: "AIzaSyB7coN0YZ5XFvSG4vrD4rvLRGSVH_kmCxY",
             authDomain: "worktracker-41d89.firebaseapp.com",
@@ -153,9 +158,12 @@
         let jobs = [];
         let timeline, items, groups;
         let loadingTimeout;
+        
+        // 存放 Flatpickr 實例
+        let fpEstStart, fpEstEnd, fpActStart, fpActEnd;
 
         // ==========================================
-        //  2. 核心功能 (確保在執行前已定義)
+        //  2. 核心功能 (先定義，解決 ReferenceError)
         // ==========================================
 
         function showError(msg) {
@@ -230,10 +238,9 @@
             });
         }
 
-        // --- 儲存資料到 Firebase ---
+        // --- 儲存資料 ---
         function saveDataToCloud(newJobsData) {
             if(!db) return;
-            // 使用 set 直接覆蓋
             db.ref('workJobs').set(newJobsData)
                 .then(() => console.log("同步成功"))
                 .catch((err) => {
@@ -242,7 +249,7 @@
                 });
         }
 
-        // --- 初始化時間軸 (Vis-Timeline) ---
+        // --- 初始化時間軸 ---
         function initTimeline() {
             const container = document.getElementById('visualization');
             groups = new vis.DataSet();
@@ -257,8 +264,6 @@
                 zoomKey: 'ctrlKey',
                 maxHeight: '500px',
                 verticalScroll: true,
-                // 這裡移除 locale: 'zh-tw' 以避免黃色警告
-                // 顯示格式由 Moment.js (已設為 zh-tw) 處理
                 format: {
                     minorLabels: { minute: 'HH:mm', hour: 'HH:mm', weekday: 'M/D (ddd)', day: 'M/D (ddd)', month: 'YYYY年 M月' },
                     majorLabels: { minute: 'ddd D HH:mm', hour: 'ddd D HH:mm', weekday: 'YYYY年 M月', day: 'YYYY年 M月', month: 'YYYY年' }
@@ -268,7 +273,6 @@
 
             timeline = new vis.Timeline(container, items, groups, options);
             
-            // 監聽拖曳更新
             items.on('update', function (event, properties) {
                 if (properties.data && properties.data.length > 0) {
                     updateJobFromTimeline(properties.data[0]);
@@ -276,7 +280,23 @@
             });
         }
 
-        // --- 從時間軸更新資料 ---
+        // --- 初始化 Flatpickr (強制24小時制) ---
+        function initPickers() {
+            const commonConfig = {
+                enableTime: true,
+                dateFormat: "Y-m-d H:i", // 標準 ISO 格式 (YYYY-MM-DD HH:mm)
+                time_24hr: true,         // ✅ 關鍵：強制 24 小時制
+                locale: "zh_tw",         // 中文介面
+                minuteIncrement: 30      // 分鐘跳轉單位 (可改 1, 5, 15)
+            };
+
+            fpEstStart = flatpickr("#estStart", commonConfig);
+            fpEstEnd   = flatpickr("#estEnd",   commonConfig);
+            fpActStart = flatpickr("#actStart", commonConfig);
+            fpActEnd   = flatpickr("#actEnd",   commonConfig);
+        }
+
+        // --- 更新資料 ---
         function updateJobFromTimeline(item) {
             const jobId = parseInt(item.group);
             const type = item.id.split('_')[1];
@@ -284,8 +304,8 @@
             
             if (jobIndex > -1) {
                 const toLocalISO = (date) => {
-                    const tzOffset = date.getTimezoneOffset() * 60000;
-                    return new Date(date.getTime() - tzOffset).toISOString().slice(0, 16);
+                    // 轉為 "YYYY-MM-DD HH:mm" 字串
+                    return moment(date).format("YYYY-MM-DD HH:mm");
                 };
 
                 let updatedJobs = [...jobs];
@@ -302,21 +322,20 @@
                 updatedJobs[jobIndex] = job;
                 saveDataToCloud(updatedJobs);
                 
-                // 如果目前正在編輯這筆，也刷新表單
                 if(document.getElementById('editJobId').value == jobId) {
                     loadJobToEdit(jobId);
                 }
             }
         }
 
-        // --- 表單提交 ---
+        // --- 提交 ---
         function handleFormSubmit() {
             if(!db) { alert("尚未連線到資料庫"); return; }
             
             const idInput = document.getElementById('editJobId').value;
             const title = document.getElementById('jobTitle').value;
             const content = document.getElementById('jobContent').value;
-            const estStart = document.getElementById('estStart').value;
+            const estStart = document.getElementById('estStart').value; // 這裡抓到的值就是 "YYYY-MM-DD HH:mm"
             const estEnd = document.getElementById('estEnd').value;
             const actStart = document.getElementById('actStart').value;
             const actEnd = document.getElementById('actEnd').value;
@@ -348,7 +367,7 @@
             resetForm();
         }
 
-        // --- 載入編輯 ---
+        // --- 編輯 ---
         function loadJobToEdit(id) {
             const job = jobs.find(j => j.id === id);
             if (!job) return;
@@ -356,10 +375,13 @@
             document.getElementById('editJobId').value = job.id;
             document.getElementById('jobTitle').value = job.title;
             document.getElementById('jobContent').value = job.content;
-            document.getElementById('estStart').value = job.estStart;
-            document.getElementById('estEnd').value = job.estEnd;
-            document.getElementById('actStart').value = job.actStart;
-            document.getElementById('actEnd').value = job.actEnd;
+            
+            // 使用 Flatpickr 設定時間
+            fpEstStart.setDate(job.estStart);
+            fpEstEnd.setDate(job.estEnd);
+            fpActStart.setDate(job.actStart || '');
+            fpActEnd.setDate(job.actEnd || '');
+
             document.getElementById('remarks').value = job.remarks;
 
             document.getElementById('formTitle').innerText = "✏️ 修改工作項目";
@@ -374,7 +396,7 @@
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
-        // --- 重置表單 ---
+        // --- 重置 ---
         function resetForm() {
             document.getElementById('editJobId').value = '';
             document.getElementById('jobTitle').value = '';
@@ -393,7 +415,6 @@
             document.getElementById('inputFormCard').classList.remove('editing-mode');
         }
 
-        // --- 刪除 ---
         function deleteJob(id) {
             if(!db) return;
             if(confirm('確定要刪除這項工作嗎？')) {
@@ -403,7 +424,6 @@
             }
         }
 
-        // --- 清除全部 ---
         function clearAllData() {
             if(!db) return;
             if(confirm('警告：這將會清除「雲端」所有資料且無法復原。確定嗎？')) {
@@ -412,43 +432,39 @@
             }
         }
 
-        // --- 工具：格式化日期 ---
         function formatDate(dateString) {
             if (!dateString) return '';
-            const d = new Date(dateString);
-            return `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+            return moment(dateString).format("MM/DD HH:mm");
         }
         
         function setDefaultTimes() {
-            const now = new Date();
-            const todayDate = moment(now).format('YYYY-MM-DD');
-            document.getElementById('estStart').value = `${todayDate}T08:00`;
-            document.getElementById('estEnd').value = `${todayDate}T17:00`;
-            document.getElementById('actStart').value = '';
-            document.getElementById('actEnd').value = '';
+            const today = moment().format('YYYY-MM-DD');
+            fpEstStart.setDate(`${today} 08:00`);
+            fpEstEnd.setDate(`${today} 17:00`);
+            fpActStart.clear();
+            fpActEnd.clear();
         }
 
         // ==========================================
-        //  3. 程式進入點 (Main)
+        //  3. 程式進入點
         // ==========================================
         document.addEventListener('DOMContentLoaded', function() {
-            
-            // 1. 設定時間格式
             moment.locale('zh-tw');
             
-            // 2. 設定 UI 初始狀態
+            // 1. 初始化介面
             initTimeline();
+            initPickers(); // 啟用 24H 選擇器
             setDefaultTimes();
             
-            // 3. 設定超時警告 (若 Firebase 10秒沒回應)
+            // 2. 設定超時保護
             loadingTimeout = setTimeout(() => {
                 const overlay = document.getElementById('loadingOverlay');
                 if(overlay && overlay.style.display !== 'none') {
-                    showError("連線回應過久，可能是網路不穩或被防火牆/廣告阻擋軟體攔截。");
+                    showError("連線時間過長，請檢查網路。");
                 }
             }, 10000);
 
-            // 4. 連接 Firebase
+            // 3. 連接 Firebase
             try {
                 firebase.initializeApp(firebaseConfig);
                 db = firebase.database();
@@ -456,35 +472,30 @@
                 document.getElementById('connectionStatus').innerText = "🟢 已連線至雲端";
                 document.getElementById('connectionStatus').classList.replace('text-gray-400', 'text-green-600');
 
-                // 5. 監聽資料變化
+                // 4. 監聽資料
                 const jobsRef = db.ref('workJobs');
                 jobsRef.on('value', (snapshot) => {
-                    // 成功讀取
                     clearTimeout(loadingTimeout);
                     
                     const data = snapshot.val();
                     if (data) {
-                        // 處理 Array 或 Object 格式
                         jobs = Array.isArray(data) ? data : Object.values(data);
                         jobs = jobs.filter(j => j != null);
                     } else {
                         jobs = [];
                     }
                     
-                    // 呼叫更新畫面函式 (因為函式已在上方定義，這裡絕對讀得到)
-                    refreshTimelineData();
+                    refreshTimelineData(); // 這裡已經是定義過的了，不會再報錯
                     renderTable();
                     
-                    // 隱藏遮罩
                     document.getElementById('loadingOverlay').style.display = 'none';
 
                 }, (error) => {
-                    // 失敗處理
                     clearTimeout(loadingTimeout);
                     console.error("Firebase Error:", error);
                     let msg = "連線失敗: " + error.message;
                     if (error.code === 'PERMISSION_DENIED') {
-                        msg = "權限不足 (PERMISSION_DENIED)。請確認 Firebase 後台規則已設為 true。";
+                        msg = "權限不足。請確認 Firebase 後台規則設定為 true。";
                     }
                     showError(msg);
                 });
