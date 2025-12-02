@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>工作時間規劃與追蹤系統 v3.1 (正式連線版)</title>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/locale/zh-tw.min.js"></script>
+    <script type="text/javascript" src="https://unpkg.com/vis-timeline/standalone/umd/vis-timeline-graph2d.min.js"></script>
+    <link href="https://unpkg.com/vis-timeline/styles/vis-timeline-graph2d.min.css" rel="stylesheet" type="text/css" />
+    
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.0/firebase-database-compat.js"></script>
+
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body { font-family: 'Microsoft JhengHei', sans-serif; background-color: #f3f4f6; }
+        #visualization { margin-top: 20px; border: 1px solid #e5e7eb; background: white; border-radius: 8px; }
+        .vis-item.expected { background-color: #e0f2fe; border-color: #38bdf8; color: #0c4a6e; } 
+        .vis-item.actual { background-color: #dcfce7; border-color: #4ade80; color: #14532d; }
+        .vis-item { border-radius: 4px; font-size: 14px; }
+        .editing-mode { border: 2px solid #f59e0b; background-color: #fffbeb; }
+        
+        #loadingOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255,255,255,0.8); z-index: 9999;
+            display: flex; justify-content: center; align-items: center;
+            font-size: 20px; font-weight: bold; color: #555;
+        }
+    </style>
+</head>
+<body class="p-6">
+
+    <div id="loadingOverlay">
+        <div class="text-center">
+            <div class="mb-2">☁️ 雲端資料連線中...</div>
+            <div class="text-sm text-gray-500 font-normal">若卡住超過 10 秒，請檢查網路連線</div>
+        </div>
+    </div>
+
+    <div class="max-w-7xl mx-auto">
+        <header class="mb-6 flex justify-between items-end">
+            <div>
+                <h1 class="text-3xl font-bold text-gray-800">☁️ 雲端工作追蹤系統</h1>
+                <p class="text-gray-600">多人協作版：任何人的修改都會即時同步到所有裝置</p>
+            </div>
+            <div id="connectionStatus" class="text-sm font-bold text-gray-400">連線中...</div>
+        </header>
+
+        <div id="inputFormCard" class="bg-white p-6 rounded-lg shadow mb-6 transition-colors duration-300">
+            <div class="flex justify-between items-center mb-4 border-b pb-2">
+                <h2 id="formTitle" class="text-xl font-semibold">新增工作項目</h2>
+                <span id="editStatus" class="hidden text-sm font-bold text-amber-600 bg-amber-100 px-2 py-1 rounded">✏️ 正在編輯模式</span>
+            </div>
+            
+            <input type="hidden" id="editJobId">
+
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="space-y-3">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">工作主旨 <span class="text-red-500">*</span></label>
+                        <input type="text" id="jobTitle" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500" placeholder="例如：網站前端開發">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">工作內容</label>
+                        <textarea id="jobContent" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm" rows="3" placeholder="詳細內容描述..."></textarea>
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700">備註</label>
+                        <input type="text" id="remarks" class="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm" placeholder="例如：需等待設計圖確認">
+                    </div>
+                </div>
+
+                <div class="space-y-3 bg-gray-50 p-4 rounded border border-gray-200">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-sm font-bold text-blue-700">🔵 預計開始 <span class="text-red-500">*</span></label>
+                            <input type="datetime-local" id="estStart" class="mt-1 block w-full rounded border-gray-300 p-1">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-bold text-blue-700">預計結束 <span class="text-red-500">*</span></label>
+                            <input type="datetime-local" id="estEnd" class="mt-1 block w-full rounded border-gray-300 p-1">
+                        </div>
+                    </div>
+                    <hr class="border-gray-300">
+                    <div class="grid grid-cols-2 gap-2">
+                        <div>
+                            <label class="block text-sm font-bold text-green-700">🟢 實際開始 (選填)</label>
+                            <input type="datetime-local" id="actStart" class="mt-1 block w-full rounded border-gray-300 p-1">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-bold text-green-700">實際結束 (選填)</label>
+                            <input type="datetime-local" id="actEnd" class="mt-1 block w-full rounded border-gray-300 p-1">
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="mt-6 flex justify-end gap-3">
+                <button id="cancelEditBtn" onclick="resetForm()" class="hidden px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50">取消編輯</button>
+                <button onclick="clearAllData()" class="text-sm text-red-400 hover:text-red-600 underline mr-auto">清除所有資料</button>
+                <button id="submitBtn" onclick="handleFormSubmit()" class="px-6 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 shadow font-bold transition-colors">新增工作</button>
+            </div>
+        </div>
+
+        <div class="bg-white p-6 rounded-lg shadow mb-6">
+            <h2 class="text-xl font-semibold mb-2">📊 時間軸視圖</h2>
+            <div id="visualization"></div>
+        </div>
+
+        <div class="bg-white p-6 rounded-lg shadow overflow-x-auto">
+            <h2 class="text-xl font-semibold mb-4">📋 詳細清單</h2>
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-50">
+                    <tr>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">主旨</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">內容</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-blue-600 uppercase">預計時間</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-green-600 uppercase">實際時間</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">備註</th>
+                    </tr>
+                </thead>
+                <tbody id="jobTableBody" class="bg-white divide-y divide-gray-200 text-sm"></tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // -------------------------------------------------------------
+        //  ✅ 您的 Firebase 設定已自動填入
+        // -------------------------------------------------------------
+        const firebaseConfig = {
+            apiKey: "AIzaSyB7coN0YZ5XFvSG4vrD4rvLRGSVH_kmCxY",
+            authDomain: "worktracker-41d89.firebaseapp.com",
+            databaseURL: "https://worktracker-41d89-default-rtdb.firebaseio.com",
+            projectId: "worktracker-41d89",
+            storageBucket: "worktracker-41d89.firebasestorage.app",
+            messagingSenderId: "182899210000",
+            appId: "1:182899210000:web:d86f11e118e6fb68e75795"
+        };
+
+        // --- 初始化 Firebase ---
+        let db;
+        try {
+            firebase.initializeApp(firebaseConfig);
+            db = firebase.database();
+            
+            document.getElementById('connectionStatus').innerText = "🟢 已連線至雲端";
+            document.getElementById('connectionStatus').classList.replace('text-gray-400', 'text-green-600');
+        } catch (e) {
+            console.error(e);
+            document.getElementById('connectionStatus').innerText = "🔴 連線失敗";
+            document.getElementById('connectionStatus').classList.replace('text-gray-400', 'text-red-600');
+            alert("連線錯誤：" + e.message);
+        }
+
+        // --- 全域變數 ---
+        let jobs = [];
+        let timeline;
+        let items;
+        let groups;
+
+        // --- 程式進入點 ---
+        document.addEventListener('DOMContentLoaded', function() {
+            moment.locale('zh-tw');
+            initTimeline();
+            setDefaultTimes();
+
+            // 監聽雲端資料庫變化
+            if(db) {
+                const jobsRef = db.ref('workJobs');
+                jobsRef.on('value', (snapshot) => {
+                    const data = snapshot.val();
+                    if (data) {
+                        jobs = Array.isArray(data) ? data : Object.values(data);
+                        jobs = jobs.filter(j => j != null);
+                    } else {
+                        jobs = [];
+                    }
+                    refreshTimelineData();
+                    renderTable();
+                    document.getElementById('loadingOverlay').style.display = 'none';
+                });
+            } else {
+                document.getElementById('loadingOverlay').style.display = 'none';
+            }
+        });
+
+        // --- 設定預設時間 ---
+        function setDefaultTimes() {
+            const now = new Date();
+            const todayDate = moment(now).format('YYYY-MM-DD');
+            document.getElementById('estStart').value = `${todayDate}T08:00`;
+            document.getElementById('estEnd').value = `${todayDate}T17:00`;
+            document.getElementById('actStart').value = '';
+            document.getElementById('actEnd').value = '';
+        }
+
+        // --- 時間軸初始化 ---
+        function initTimeline() {
+            const container = document.getElementById('visualization');
+            groups = new vis.DataSet();
+            items = new vis.DataSet();
+
+            const options = {
+                groupOrder: 'content',
+                editable: { add: false, updateTime: true, updateGroup: false, remove: true },
+                margin: { item: 10 },
+                orientation: 'top',
+                stack: false,
+                zoomKey: 'ctrlKey',
+                maxHeight: '500px',
+                verticalScroll: true,
+                locale: 'zh-tw',
+                format: {
+                    minorLabels: { minute: 'HH:mm', hour: 'HH:mm', weekday: 'M/D (ddd)', day: 'M/D (ddd)', month: 'YYYY年 M月' },
+                    majorLabels: { minute: 'ddd D HH:mm', hour: 'ddd D HH:mm', weekday: 'YYYY年 M月', day: 'YYYY年 M月', month: 'YYYY年' }
+                },
+                zoomMin: 1000 * 60 * 60, 
+            };
+
+            timeline = new vis.Timeline(container, items, groups, options);
+            
+            items.on('update', function (event, properties) {
+                if (properties.data && properties.data.length > 0) {
+                    updateJobFromTimeline(properties.data[0]);
+                }
+            });
+        }
+
+        // --- 表單提交 ---
+        function handleFormSubmit() {
+            if(!db) { alert("尚未連線到資料庫，無法儲存"); return; }
+            
+            const idInput = document.getElementById('editJobId').value;
+            const title = document.getElementById('jobTitle').value;
+            const content = document.getElementById('jobContent').value;
+            const estStart = document.getElementById('estStart').value;
+            const estEnd = document.getElementById('estEnd').value;
+            const actStart = document.getElementById('actStart').value;
+            const actEnd = document.getElementById('actEnd').value;
+            const remarks = document.getElementById('remarks').value;
+
+            if (!title || !estStart || !estEnd) {
+                alert("請務必填寫：工作主旨、預計開始時間、預計結束時間");
+                return;
+            }
+            if (new Date(estStart) > new Date(estEnd)) {
+                alert("預計開始時間不能晚於結束時間");
+                return;
+            }
+
+            const jobData = {
+                id: idInput ? parseInt(idInput) : Date.now(),
+                title, content, estStart, estEnd, actStart, actEnd, remarks
+            };
+
+            let newJobs = [...jobs];
+            if (idInput) {
+                const index = newJobs.findIndex(j => j.id == idInput);
+                if (index !== -1) newJobs[index] = jobData;
+            } else {
+                newJobs.push(jobData);
+            }
+
+            saveDataToCloud(newJobs);
+            resetForm();
+        }
+
+        function saveDataToCloud(newJobsData) {
+            db.ref('workJobs').set(newJobsData)
+                .then(() => console.log("同步成功"))
+                .catch((err) => alert("同步失敗：" + err.message));
+        }
+
+        // --- 編輯 ---
+        function loadJobToEdit(id) {
+            const job = jobs.find(j => j.id === id);
+            if (!job) return;
+
+            document.getElementById('editJobId').value = job.id;
+            document.getElementById('jobTitle').value = job.title;
+            document.getElementById('jobContent').value = job.content;
+            document.getElementById('estStart').value = job.estStart;
+            document.getElementById('estEnd').value = job.estEnd;
+            document.getElementById('actStart').value = job.actStart;
+            document.getElementById('actEnd').value = job.actEnd;
+            document.getElementById('remarks').value = job.remarks;
+
+            document.getElementById('formTitle').innerText = "✏️ 修改工作項目";
+            const btn = document.getElementById('submitBtn');
+            btn.innerText = "確認修改";
+            btn.classList.replace('bg-blue-600', 'bg-amber-500');
+            btn.classList.replace('hover:bg-blue-700', 'hover:bg-amber-600');
+            
+            document.getElementById('cancelEditBtn').classList.remove('hidden');
+            document.getElementById('editStatus').classList.remove('hidden');
+            document.getElementById('inputFormCard').classList.add('editing-mode');
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        function resetForm() {
+            document.getElementById('editJobId').value = '';
+            document.getElementById('jobTitle').value = '';
+            document.getElementById('jobContent').value = '';
+            document.getElementById('remarks').value = '';
+            setDefaultTimes();
+
+            document.getElementById('formTitle').innerText = "新增工作項目";
+            const btn = document.getElementById('submitBtn');
+            btn.innerText = "新增工作";
+            btn.classList.replace('bg-amber-500', 'bg-blue-600');
+            btn.classList.replace('hover:bg-amber-600', 'hover:bg-blue-700');
+
+            document.getElementById('cancelEditBtn').classList.add('hidden');
+            document.getElementById('editStatus').classList.add('hidden');
+            document.getElementById('inputFormCard').classList.remove('editing-mode');
+        }
+
+        function deleteJob(id) {
+            if(!db) return;
+            if(confirm('確定要刪除這項工作嗎？')) {
+                const newJobs = jobs.filter(j => j.id !== id);
+                saveDataToCloud(newJobs);
+                if(document.getElementById('editJobId').value == id) resetForm();
+            }
+        }
+
+        function clearAllData() {
+            if(!db) return;
+            if(confirm('警告：這將會清除「雲端」所有資料且無法復原。確定嗎？')) {
+                db.ref('workJobs').set([]);
+                resetForm();
+            }
+        }
+
+        function formatDate(dateString) {
+            if (!dateString) return '';
+            const d = new Date(dateString);
+            return `${d.getMonth()+1}/${d.getDate()} ${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+        }
+    </script>
+</body>
+</html>
