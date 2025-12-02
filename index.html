@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工作時間規劃與追蹤系統 v3.5 (24H制修復版)</title>
+    <title>工作時間規劃與追蹤系統 v4.0 (完工管理版)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/locale/zh-tw.min.js"></script>
@@ -36,7 +36,13 @@
             flex-direction: column;
             color: #333;
         }
-        /* 修正 Flatpickr 輸入框樣式 */
+        /* 完成工作視窗遮罩 */
+        #completeModalOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 5000;
+            display: none; justify-content: center; align-items: center;
+        }
+
         input.flatpickr-input { background-color: white; }
     </style>
 </head>
@@ -52,11 +58,36 @@
         </div>
     </div>
 
+    <div id="completeModalOverlay">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+            <h3 class="text-xl font-bold mb-4 text-gray-800">🎉 恭喜完成！請確認時間</h3>
+            <p class="text-sm text-gray-500 mb-4">請填寫實際執行的時間，以便歸檔。</p>
+            
+            <input type="hidden" id="completeJobId">
+            
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-bold text-green-700">🟢 實際開始時間</label>
+                    <input type="text" id="modalActStart" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-gray-50" placeholder="選擇時間">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold text-green-700">🏁 實際完成時間</label>
+                    <input type="text" id="modalActEnd" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-gray-50" placeholder="選擇時間">
+                </div>
+            </div>
+
+            <div class="mt-6 flex justify-end gap-3">
+                <button onclick="closeCompleteModal()" class="px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50">取消</button>
+                <button onclick="confirmComplete()" class="px-6 py-2 bg-green-600 text-white rounded hover:bg-green-700 shadow font-bold">確認歸檔</button>
+            </div>
+        </div>
+    </div>
+
     <div class="max-w-7xl mx-auto">
         <header class="mb-6 flex justify-between items-end">
             <div>
                 <h1 class="text-3xl font-bold text-gray-800">☁️ 雲端工作追蹤系統</h1>
-                <p class="text-gray-600">v3.5 正式版 (24小時制)</p>
+                <p class="text-gray-600">v4.0 完工管理版</p>
             </div>
             <div id="connectionStatus" class="text-sm font-bold text-gray-400">初始化中...</div>
         </header>
@@ -121,8 +152,8 @@
             <div id="visualization"></div>
         </div>
 
-        <div class="bg-white p-6 rounded-lg shadow overflow-x-auto">
-            <h2 class="text-xl font-semibold mb-4">📋 詳細清單</h2>
+        <div class="bg-white p-6 rounded-lg shadow overflow-x-auto mb-8">
+            <h2 class="text-xl font-semibold mb-4 text-blue-700">🚀 進行中工作</h2>
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                     <tr>
@@ -135,6 +166,23 @@
                     </tr>
                 </thead>
                 <tbody id="jobTableBody" class="bg-white divide-y divide-gray-200 text-sm"></tbody>
+            </table>
+        </div>
+
+        <div class="bg-gray-50 p-6 rounded-lg shadow-inner overflow-x-auto border border-gray-200">
+            <h2 class="text-xl font-semibold mb-4 text-gray-600">✅ 已完成工作</h2>
+            <table class="min-w-full divide-y divide-gray-200">
+                <thead class="bg-gray-100">
+                    <tr>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">操作</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">主旨</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">內容</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-blue-600 uppercase">預計時間</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-green-600 uppercase">實際時間</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">備註</th>
+                    </tr>
+                </thead>
+                <tbody id="completedJobTableBody" class="bg-white divide-y divide-gray-200 text-sm opacity-80"></tbody>
             </table>
         </div>
     </div>
@@ -159,11 +207,12 @@
         let timeline, items, groups;
         let loadingTimeout;
         
-        // 存放 Flatpickr 實例
+        // Flatpickr 實例
         let fpEstStart, fpEstEnd, fpActStart, fpActEnd;
+        let fpModalStart, fpModalEnd; // Modal 用的時間選擇器
 
         // ==========================================
-        //  2. 核心功能 (先定義，解決 ReferenceError)
+        //  2. 核心功能
         // ==========================================
 
         function showError(msg) {
@@ -172,14 +221,19 @@
             document.getElementById('errorActions').classList.remove('hidden');
         }
 
-        // --- 刷新時間軸 ---
         function refreshTimelineData() {
             if(!groups || !items) return;
             groups.clear();
             items.clear();
             
             jobs.forEach(job => {
-                groups.add({ id: job.id, content: `<span style="font-weight:bold">${job.title}</span>` });
+                // 已完成的工作是否要在時間軸顯示？這裡設定為顯示，但加上 (已完成) 標記
+                let titleHtml = `<span style="font-weight:bold">${job.title}</span>`;
+                if(job.status === 'completed') {
+                    titleHtml += ` <span style="color:green">✔</span>`;
+                }
+
+                groups.add({ id: job.id, content: titleHtml });
 
                 items.add({
                     id: job.id + '_est',
@@ -209,20 +263,45 @@
             }
         }
 
-        // --- 刷新表格 ---
+        // --- 渲染表格 (分成進行中 & 已完成) ---
         function renderTable() {
-            const tbody = document.getElementById('jobTableBody');
-            tbody.innerHTML = '';
+            const activeTbody = document.getElementById('jobTableBody');
+            const completedTbody = document.getElementById('completedJobTableBody');
+            
+            activeTbody.innerHTML = '';
+            completedTbody.innerHTML = '';
+
             const sortedJobs = [...jobs].sort((a, b) => new Date(b.estStart) - new Date(a.estStart));
 
             sortedJobs.forEach(job => {
+                const isCompleted = job.status === 'completed';
                 const tr = document.createElement('tr');
+                
+                // 操作按鈕 HTML
+                let actionsHtml = '';
+                if (isCompleted) {
+                    // 已完成工作：編輯、刪除、還原
+                    actionsHtml = `
+                        <div class="flex space-x-2">
+                            <button onclick="loadJobToEdit(${job.id})" class="text-indigo-600 hover:text-indigo-900 bg-indigo-50 px-2 py-1 rounded text-xs">編輯</button>
+                            <button onclick="revertJob(${job.id})" class="text-amber-600 hover:text-amber-900 bg-amber-50 px-2 py-1 rounded text-xs">還原</button>
+                            <button onclick="deleteJob(${job.id})" class="text-red-600 hover:text-red-900 bg-red-50 px-2 py-1 rounded text-xs">刪除</button>
+                        </div>
+                    `;
+                } else {
+                    // 進行中工作：編輯、刪除、完成
+                    actionsHtml = `
+                        <div class="flex space-x-2">
+                            <button onclick="loadJobToEdit(${job.id})" class="text-indigo-600 hover:text-indigo-900 bg-indigo-50 px-2 py-1 rounded text-xs">編輯</button>
+                            <button onclick="openCompleteModal(${job.id})" class="text-white bg-green-600 hover:bg-green-700 px-2 py-1 rounded text-xs shadow">完成</button>
+                            <button onclick="deleteJob(${job.id})" class="text-red-600 hover:text-red-900 bg-red-50 px-2 py-1 rounded text-xs">刪除</button>
+                        </div>
+                    `;
+                }
+
                 tr.innerHTML = `
-                    <td class="px-3 py-4 whitespace-nowrap text-sm font-medium">
-                        <button onclick="loadJobToEdit(${job.id})" class="text-indigo-600 hover:text-indigo-900 mr-3 bg-indigo-50 px-2 py-1 rounded">編輯</button>
-                        <button onclick="deleteJob(${job.id})" class="text-red-600 hover:text-red-900 bg-red-50 px-2 py-1 rounded">刪除</button>
-                    </td>
-                    <td class="px-3 py-4 font-medium text-gray-900">${job.title}</td>
+                    <td class="px-3 py-4 whitespace-nowrap text-sm font-medium">${actionsHtml}</td>
+                    <td class="px-3 py-4 font-medium text-gray-900 ${isCompleted ? 'line-through text-gray-400' : ''}">${job.title}</td>
                     <td class="px-3 py-4 text-gray-500 max-w-xs truncate" title="${job.content}">${job.content}</td>
                     <td class="px-3 py-4 text-gray-500 text-xs">
                         ${formatDate(job.estStart)}<br>↓<br>${formatDate(job.estEnd)}
@@ -234,11 +313,76 @@
                     </td>
                     <td class="px-3 py-4 text-gray-500 text-xs">${job.remarks}</td>
                 `;
-                tbody.appendChild(tr);
+
+                if (isCompleted) {
+                    completedTbody.appendChild(tr);
+                } else {
+                    activeTbody.appendChild(tr);
+                }
             });
         }
 
-        // --- 儲存資料 ---
+        // --- 完工 Modal 相關功能 ---
+        function openCompleteModal(id) {
+            const job = jobs.find(j => j.id === id);
+            if (!job) return;
+
+            document.getElementById('completeJobId').value = id;
+            
+            // 如果原本已經有填實際時間，就帶入；沒有的話帶入現在時間
+            const now = new Date();
+            const defaultStart = job.actStart ? job.actStart : now;
+            const defaultEnd = job.actEnd ? job.actEnd : now;
+
+            fpModalStart.setDate(defaultStart);
+            fpModalEnd.setDate(defaultEnd);
+
+            // 顯示 Modal
+            document.getElementById('completeModalOverlay').style.display = 'flex';
+        }
+
+        function closeCompleteModal() {
+            document.getElementById('completeModalOverlay').style.display = 'none';
+        }
+
+        function confirmComplete() {
+            const id = parseInt(document.getElementById('completeJobId').value);
+            const actStart = document.getElementById('modalActStart').value;
+            const actEnd = document.getElementById('modalActEnd').value;
+
+            if(!actStart || !actEnd) {
+                alert("請填寫實際開始與完成時間");
+                return;
+            }
+
+            // 更新工作狀態
+            const index = jobs.findIndex(j => j.id === id);
+            if (index !== -1) {
+                let updatedJobs = [...jobs];
+                updatedJobs[index] = {
+                    ...updatedJobs[index],
+                    actStart: actStart,
+                    actEnd: actEnd,
+                    status: 'completed' // 標記為已完成
+                };
+                saveDataToCloud(updatedJobs);
+                closeCompleteModal();
+                resetForm(); // 若原本在編輯該筆，重置表單
+            }
+        }
+
+        // --- 還原已完成工作 ---
+        function revertJob(id) {
+            if(confirm('確定要將此工作還原為「進行中」嗎？')) {
+                const index = jobs.findIndex(j => j.id === id);
+                if (index !== -1) {
+                    let updatedJobs = [...jobs];
+                    updatedJobs[index].status = 'active'; // 移除 completed 狀態
+                    saveDataToCloud(updatedJobs);
+                }
+            }
+        }
+
         function saveDataToCloud(newJobsData) {
             if(!db) return;
             db.ref('workJobs').set(newJobsData)
@@ -249,7 +393,6 @@
                 });
         }
 
-        // --- 初始化時間軸 ---
         function initTimeline() {
             const container = document.getElementById('visualization');
             groups = new vis.DataSet();
@@ -280,33 +423,32 @@
             });
         }
 
-        // --- 初始化 Flatpickr (強制24小時制) ---
         function initPickers() {
             const commonConfig = {
                 enableTime: true,
-                dateFormat: "Y-m-d H:i", // 標準 ISO 格式 (YYYY-MM-DD HH:mm)
-                time_24hr: true,         // ✅ 關鍵：強制 24 小時制
-                locale: "zh_tw",         // 中文介面
-                minuteIncrement: 30      // 分鐘跳轉單位 (可改 1, 5, 15)
+                dateFormat: "Y-m-d H:i",
+                time_24hr: true,
+                locale: "zh_tw",
+                minuteIncrement: 10
             };
 
             fpEstStart = flatpickr("#estStart", commonConfig);
             fpEstEnd   = flatpickr("#estEnd",   commonConfig);
             fpActStart = flatpickr("#actStart", commonConfig);
             fpActEnd   = flatpickr("#actEnd",   commonConfig);
+
+            // Modal 用的選擇器
+            fpModalStart = flatpickr("#modalActStart", commonConfig);
+            fpModalEnd   = flatpickr("#modalActEnd",   commonConfig);
         }
 
-        // --- 更新資料 ---
         function updateJobFromTimeline(item) {
             const jobId = parseInt(item.group);
             const type = item.id.split('_')[1];
             const jobIndex = jobs.findIndex(j => j.id === jobId);
             
             if (jobIndex > -1) {
-                const toLocalISO = (date) => {
-                    // 轉為 "YYYY-MM-DD HH:mm" 字串
-                    return moment(date).format("YYYY-MM-DD HH:mm");
-                };
+                const toLocalISO = (date) => moment(date).format("YYYY-MM-DD HH:mm");
 
                 let updatedJobs = [...jobs];
                 let job = {...updatedJobs[jobIndex]};
@@ -328,14 +470,13 @@
             }
         }
 
-        // --- 提交 ---
         function handleFormSubmit() {
             if(!db) { alert("尚未連線到資料庫"); return; }
             
             const idInput = document.getElementById('editJobId').value;
             const title = document.getElementById('jobTitle').value;
             const content = document.getElementById('jobContent').value;
-            const estStart = document.getElementById('estStart').value; // 這裡抓到的值就是 "YYYY-MM-DD HH:mm"
+            const estStart = document.getElementById('estStart').value;
             const estEnd = document.getElementById('estEnd').value;
             const actStart = document.getElementById('actStart').value;
             const actEnd = document.getElementById('actEnd').value;
@@ -352,13 +493,18 @@
 
             const jobData = {
                 id: idInput ? parseInt(idInput) : Date.now(),
-                title, content, estStart, estEnd, actStart, actEnd, remarks
+                title, content, estStart, estEnd, actStart, actEnd, remarks,
+                status: 'active' // 預設為進行中
             };
 
             let newJobs = [...jobs];
             if (idInput) {
                 const index = newJobs.findIndex(j => j.id == idInput);
-                if (index !== -1) newJobs[index] = jobData;
+                if (index !== -1) {
+                    // 更新時保留原本的 status，除非是新建
+                    const oldStatus = newJobs[index].status || 'active';
+                    newJobs[index] = { ...jobData, status: oldStatus };
+                }
             } else {
                 newJobs.push(jobData);
             }
@@ -367,7 +513,6 @@
             resetForm();
         }
 
-        // --- 編輯 ---
         function loadJobToEdit(id) {
             const job = jobs.find(j => j.id === id);
             if (!job) return;
@@ -376,7 +521,6 @@
             document.getElementById('jobTitle').value = job.title;
             document.getElementById('jobContent').value = job.content;
             
-            // 使用 Flatpickr 設定時間
             fpEstStart.setDate(job.estStart);
             fpEstEnd.setDate(job.estEnd);
             fpActStart.setDate(job.actStart || '');
@@ -396,7 +540,6 @@
             window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
-        // --- 重置 ---
         function resetForm() {
             document.getElementById('editJobId').value = '';
             document.getElementById('jobTitle').value = '';
@@ -450,13 +593,10 @@
         // ==========================================
         document.addEventListener('DOMContentLoaded', function() {
             moment.locale('zh-tw');
-            
-            // 1. 初始化介面
             initTimeline();
-            initPickers(); // 啟用 24H 選擇器
+            initPickers(); 
             setDefaultTimes();
             
-            // 2. 設定超時保護
             loadingTimeout = setTimeout(() => {
                 const overlay = document.getElementById('loadingOverlay');
                 if(overlay && overlay.style.display !== 'none') {
@@ -464,7 +604,6 @@
                 }
             }, 10000);
 
-            // 3. 連接 Firebase
             try {
                 firebase.initializeApp(firebaseConfig);
                 db = firebase.database();
@@ -472,7 +611,6 @@
                 document.getElementById('connectionStatus').innerText = "🟢 已連線至雲端";
                 document.getElementById('connectionStatus').classList.replace('text-gray-400', 'text-green-600');
 
-                // 4. 監聽資料
                 const jobsRef = db.ref('workJobs');
                 jobsRef.on('value', (snapshot) => {
                     clearTimeout(loadingTimeout);
@@ -485,7 +623,7 @@
                         jobs = [];
                     }
                     
-                    refreshTimelineData(); // 這裡已經是定義過的了，不會再報錯
+                    refreshTimelineData(); 
                     renderTable();
                     
                     document.getElementById('loadingOverlay').style.display = 'none';
