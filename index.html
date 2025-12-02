@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工作時間規劃與追蹤系統 v4.0 (完工管理版)</title>
+    <title>工作時間規劃與追蹤系統 v4.1 (智慧填寫版)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/locale/zh-tw.min.js"></script>
@@ -61,7 +61,7 @@
     <div id="completeModalOverlay">
         <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
             <h3 class="text-xl font-bold mb-4 text-gray-800">🎉 恭喜完成！請確認時間</h3>
-            <p class="text-sm text-gray-500 mb-4">請填寫實際執行的時間，以便歸檔。</p>
+            <p class="text-sm text-gray-500 mb-4">預設已帶入您的「預計時間」，若有變動請直接修改。</p>
             
             <input type="hidden" id="completeJobId">
             
@@ -87,7 +87,7 @@
         <header class="mb-6 flex justify-between items-end">
             <div>
                 <h1 class="text-3xl font-bold text-gray-800">☁️ 雲端工作追蹤系統</h1>
-                <p class="text-gray-600">v4.0 完工管理版</p>
+                <p class="text-gray-600">v4.1 智慧填寫版</p>
             </div>
             <div id="connectionStatus" class="text-sm font-bold text-gray-400">初始化中...</div>
         </header>
@@ -148,7 +148,7 @@
         </div>
 
         <div class="bg-white p-6 rounded-lg shadow mb-6">
-            <h2 class="text-xl font-semibold mb-2">📊 時間軸視圖</h2>
+            <h2 class="text-xl font-semibold mb-2">📊 時間軸視圖 (僅顯示進行中)</h2>
             <div id="visualization"></div>
         </div>
 
@@ -207,9 +207,8 @@
         let timeline, items, groups;
         let loadingTimeout;
         
-        // Flatpickr 實例
         let fpEstStart, fpEstEnd, fpActStart, fpActEnd;
-        let fpModalStart, fpModalEnd; // Modal 用的時間選擇器
+        let fpModalStart, fpModalEnd;
 
         // ==========================================
         //  2. 核心功能
@@ -221,19 +220,17 @@
             document.getElementById('errorActions').classList.remove('hidden');
         }
 
+        // --- 刷新時間軸 (隱藏已完成) ---
         function refreshTimelineData() {
             if(!groups || !items) return;
             groups.clear();
             items.clear();
             
             jobs.forEach(job => {
-                // 已完成的工作是否要在時間軸顯示？這裡設定為顯示，但加上 (已完成) 標記
-                let titleHtml = `<span style="font-weight:bold">${job.title}</span>`;
-                if(job.status === 'completed') {
-                    titleHtml += ` <span style="color:green">✔</span>`;
-                }
+                // 修改點：如果工作狀態是 'completed'，就不加入時間軸
+                if(job.status === 'completed') return;
 
-                groups.add({ id: job.id, content: titleHtml });
+                groups.add({ id: job.id, content: `<span style="font-weight:bold">${job.title}</span>` });
 
                 items.add({
                     id: job.id + '_est',
@@ -258,12 +255,14 @@
                 }
             });
             
-            if(jobs.length > 0) {
+            // 如果還有未完成的工作，調整視角；否則不做動作避免報錯
+            const activeJobs = jobs.filter(j => j.status !== 'completed');
+            if(activeJobs.length > 0) {
                 timeline.fit(); 
             }
         }
 
-        // --- 渲染表格 (分成進行中 & 已完成) ---
+        // --- 渲染表格 (進行中 & 已完成) ---
         function renderTable() {
             const activeTbody = document.getElementById('jobTableBody');
             const completedTbody = document.getElementById('completedJobTableBody');
@@ -277,10 +276,8 @@
                 const isCompleted = job.status === 'completed';
                 const tr = document.createElement('tr');
                 
-                // 操作按鈕 HTML
                 let actionsHtml = '';
                 if (isCompleted) {
-                    // 已完成工作：編輯、刪除、還原
                     actionsHtml = `
                         <div class="flex space-x-2">
                             <button onclick="loadJobToEdit(${job.id})" class="text-indigo-600 hover:text-indigo-900 bg-indigo-50 px-2 py-1 rounded text-xs">編輯</button>
@@ -289,7 +286,6 @@
                         </div>
                     `;
                 } else {
-                    // 進行中工作：編輯、刪除、完成
                     actionsHtml = `
                         <div class="flex space-x-2">
                             <button onclick="loadJobToEdit(${job.id})" class="text-indigo-600 hover:text-indigo-900 bg-indigo-50 px-2 py-1 rounded text-xs">編輯</button>
@@ -322,22 +318,20 @@
             });
         }
 
-        // --- 完工 Modal 相關功能 ---
+        // --- 完工 Modal (智慧預填) ---
         function openCompleteModal(id) {
             const job = jobs.find(j => j.id === id);
             if (!job) return;
 
             document.getElementById('completeJobId').value = id;
             
-            // 如果原本已經有填實際時間，就帶入；沒有的話帶入現在時間
-            const now = new Date();
-            const defaultStart = job.actStart ? job.actStart : now;
-            const defaultEnd = job.actEnd ? job.actEnd : now;
+            // 修改點：優先使用已填寫的實際時間，若無，則預設帶入「預計時間」
+            const defaultStart = job.actStart ? job.actStart : job.estStart;
+            const defaultEnd = job.actEnd ? job.actEnd : job.estEnd;
 
             fpModalStart.setDate(defaultStart);
             fpModalEnd.setDate(defaultEnd);
 
-            // 顯示 Modal
             document.getElementById('completeModalOverlay').style.display = 'flex';
         }
 
@@ -355,7 +349,6 @@
                 return;
             }
 
-            // 更新工作狀態
             const index = jobs.findIndex(j => j.id === id);
             if (index !== -1) {
                 let updatedJobs = [...jobs];
@@ -363,21 +356,21 @@
                     ...updatedJobs[index],
                     actStart: actStart,
                     actEnd: actEnd,
-                    status: 'completed' // 標記為已完成
+                    status: 'completed' 
                 };
                 saveDataToCloud(updatedJobs);
                 closeCompleteModal();
-                resetForm(); // 若原本在編輯該筆，重置表單
+                resetForm(); 
             }
         }
 
-        // --- 還原已完成工作 ---
+        // --- 還原 ---
         function revertJob(id) {
             if(confirm('確定要將此工作還原為「進行中」嗎？')) {
                 const index = jobs.findIndex(j => j.id === id);
                 if (index !== -1) {
                     let updatedJobs = [...jobs];
-                    updatedJobs[index].status = 'active'; // 移除 completed 狀態
+                    updatedJobs[index].status = 'active'; 
                     saveDataToCloud(updatedJobs);
                 }
             }
@@ -437,7 +430,6 @@
             fpActStart = flatpickr("#actStart", commonConfig);
             fpActEnd   = flatpickr("#actEnd",   commonConfig);
 
-            // Modal 用的選擇器
             fpModalStart = flatpickr("#modalActStart", commonConfig);
             fpModalEnd   = flatpickr("#modalActEnd",   commonConfig);
         }
@@ -494,14 +486,13 @@
             const jobData = {
                 id: idInput ? parseInt(idInput) : Date.now(),
                 title, content, estStart, estEnd, actStart, actEnd, remarks,
-                status: 'active' // 預設為進行中
+                status: 'active' 
             };
 
             let newJobs = [...jobs];
             if (idInput) {
                 const index = newJobs.findIndex(j => j.id == idInput);
                 if (index !== -1) {
-                    // 更新時保留原本的 status，除非是新建
                     const oldStatus = newJobs[index].status || 'active';
                     newJobs[index] = { ...jobData, status: oldStatus };
                 }
