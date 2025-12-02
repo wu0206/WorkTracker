@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>工作時間規劃與追蹤系統 v4.2 (操作優化版)</title>
+    <title>工作時間規劃與追蹤系統 v4.3 (分欄填寫版)</title>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/moment.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/moment.js/2.29.4/locale/zh-tw.min.js"></script>
@@ -28,7 +28,6 @@
         .vis-item { border-radius: 4px; font-size: 14px; }
         .editing-mode { border: 2px solid #f59e0b; background-color: #fffbeb; }
         
-        /* 遮罩樣式 */
         #loadingOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(255,255,255,0.95); z-index: 9999;
@@ -36,14 +35,14 @@
             flex-direction: column;
             color: #333;
         }
-        /* 完成工作視窗遮罩 */
         #completeModalOverlay {
             position: fixed; top: 0; left: 0; width: 100%; height: 100%;
             background: rgba(0,0,0,0.5); z-index: 5000;
             display: none; justify-content: center; align-items: center;
         }
-
+        /* 調整輸入框與選單樣式 */
         input.flatpickr-input { background-color: white; }
+        select { background-color: white; border: 1px solid #d1d5db; border-radius: 0.25rem; padding: 0.5rem; }
     </style>
 </head>
 <body class="p-6">
@@ -59,20 +58,30 @@
     </div>
 
     <div id="completeModalOverlay">
-        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+        <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg mx-4">
             <h3 class="text-xl font-bold mb-4 text-gray-800">🎉 恭喜完成！請確認時間</h3>
-            <p class="text-sm text-gray-500 mb-4">預設已帶入您的「預計時間」，若有變動請直接修改。</p>
+            <p class="text-sm text-gray-500 mb-4">預設已帶入「預計時間」，請填寫實際執行時間。</p>
             
             <input type="hidden" id="completeJobId">
             
             <div class="space-y-4">
                 <div>
-                    <label class="block text-sm font-bold text-green-700">🟢 實際開始時間</label>
-                    <input type="text" id="modalActStart" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-gray-50" placeholder="選擇時間">
+                    <label class="block text-sm font-bold text-green-700 mb-1">🟢 實際開始時間</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="modalActStartDate" class="flatpickr-date block w-3/5 rounded border border-gray-300 p-2" placeholder="日期">
+                        <select id="modalActStartHour" class="w-1/5 text-center"></select>
+                        <span class="self-center font-bold">:</span>
+                        <select id="modalActStartMin" class="w-1/5 text-center"></select>
+                    </div>
                 </div>
                 <div>
-                    <label class="block text-sm font-bold text-green-700">🏁 實際完成時間</label>
-                    <input type="text" id="modalActEnd" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-gray-50" placeholder="選擇時間">
+                    <label class="block text-sm font-bold text-green-700 mb-1">🏁 實際完成時間</label>
+                    <div class="flex gap-2">
+                        <input type="text" id="modalActEndDate" class="flatpickr-date block w-3/5 rounded border border-gray-300 p-2" placeholder="日期">
+                        <select id="modalActEndHour" class="w-1/5 text-center"></select>
+                        <span class="self-center font-bold">:</span>
+                        <select id="modalActEndMin" class="w-1/5 text-center"></select>
+                    </div>
                 </div>
             </div>
 
@@ -87,7 +96,7 @@
         <header class="mb-6 flex justify-between items-end">
             <div>
                 <h1 class="text-3xl font-bold text-gray-800">☁️ 雲端工作追蹤系統</h1>
-                <p class="text-gray-600">v4.2 操作優化版</p>
+                <p class="text-gray-600">v4.3 分欄填寫版 (日期與時間分離)</p>
             </div>
             <div id="connectionStatus" class="text-sm font-bold text-gray-400">初始化中...</div>
         </header>
@@ -116,30 +125,33 @@
                     </div>
                 </div>
 
-                <div class="space-y-3 bg-gray-50 p-4 rounded border border-gray-200">
-                    <div class="grid grid-cols-2 gap-2">
-                        <div>
-                            <label class="block text-sm font-bold text-blue-700">🔵 預計開始 <span class="text-red-500">*</span></label>
-                            <input type="text" id="estStart" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-white" placeholder="點擊選擇時間">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-bold text-blue-700">預計結束 <span class="text-red-500">*</span></label>
-                            <input type="text" id="estEnd" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-white" placeholder="點擊選擇時間">
+                <div class="space-y-4 bg-gray-50 p-4 rounded border border-gray-200">
+                    <div>
+                        <label class="block text-sm font-bold text-blue-700 mb-1">🔵 預計開始 <span class="text-red-500">*</span></label>
+                        <div class="flex gap-2">
+                            <input type="text" id="estStartDate" class="flatpickr-date block w-3/5 rounded border border-gray-300 p-2" placeholder="日期">
+                            <select id="estStartHour" class="w-1/5 text-center"></select>
+                            <span class="self-center font-bold">:</span>
+                            <select id="estStartMin" class="w-1/5 text-center"></select>
                         </div>
                     </div>
+                    
                     <hr class="border-gray-300">
-                    <div class="grid grid-cols-2 gap-2">
-                        <div>
-                            <label class="block text-sm font-bold text-green-700">🟢 實際開始 (選填)</label>
-                            <input type="text" id="actStart" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-white" placeholder="點擊選擇時間">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-bold text-green-700">實際結束 (選填)</label>
-                            <input type="text" id="actEnd" class="mt-1 block w-full rounded border border-gray-300 p-2 bg-white" placeholder="點擊選擇時間">
+
+                    <div>
+                        <label class="block text-sm font-bold text-blue-700 mb-1">預計結束 <span class="text-red-500">*</span></label>
+                        <div class="flex gap-2">
+                            <input type="text" id="estEndDate" class="flatpickr-date block w-3/5 rounded border border-gray-300 p-2" placeholder="日期">
+                            <select id="estEndHour" class="w-1/5 text-center"></select>
+                            <span class="self-center font-bold">:</span>
+                            <select id="estEndMin" class="w-1/5 text-center"></select>
                         </div>
                     </div>
+                    
+                    <div class="text-xs text-gray-400 mt-2 text-right">* 實際時間請於完成時填寫</div>
                 </div>
             </div>
+            
             <div class="mt-6 flex justify-end gap-3">
                 <button id="cancelEditBtn" onclick="resetForm()" class="hidden px-4 py-2 border border-gray-300 text-gray-700 rounded hover:bg-gray-50">取消編輯</button>
                 <button onclick="clearAllData()" class="text-sm text-red-400 hover:text-red-600 underline mr-auto">清除所有資料</button>
@@ -157,12 +169,14 @@
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-50">
                     <tr>
-                        <th class="px-3 py-3 text-left text-xs font-bold text-gray-700 uppercase tracking-wider w-24">狀態</th> <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">主旨</th>
+                        <th class="px-3 py-3 text-left text-xs font-bold text-gray-700 uppercase tracking-wider w-24">狀態</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">主旨</th>
                         <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">內容</th>
                         <th class="px-3 py-3 text-left text-xs font-medium text-blue-600 uppercase">預計時間</th>
                         <th class="px-3 py-3 text-left text-xs font-medium text-green-600 uppercase">實際時間</th>
                         <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">備註</th>
-                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">管理</th> </tr>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">管理</th>
+                    </tr>
                 </thead>
                 <tbody id="jobTableBody" class="bg-white divide-y divide-gray-200 text-sm"></tbody>
             </table>
@@ -173,12 +187,14 @@
             <table class="min-w-full divide-y divide-gray-200">
                 <thead class="bg-gray-100">
                     <tr>
-                        <th class="px-3 py-3 text-left text-xs font-bold text-gray-700 uppercase tracking-wider w-24">狀態</th> <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">主旨</th>
+                        <th class="px-3 py-3 text-left text-xs font-bold text-gray-700 uppercase tracking-wider w-24">狀態</th>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">主旨</th>
                         <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">內容</th>
                         <th class="px-3 py-3 text-left text-xs font-medium text-blue-600 uppercase">預計時間</th>
                         <th class="px-3 py-3 text-left text-xs font-medium text-green-600 uppercase">實際時間</th>
                         <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">備註</th>
-                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">管理</th> </tr>
+                        <th class="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-32">管理</th>
+                    </tr>
                 </thead>
                 <tbody id="completedJobTableBody" class="bg-white divide-y divide-gray-200 text-sm opacity-80"></tbody>
             </table>
@@ -205,9 +221,6 @@
         let timeline, items, groups;
         let loadingTimeout;
         
-        let fpEstStart, fpEstEnd, fpActStart, fpActEnd;
-        let fpModalStart, fpModalEnd;
-
         // ==========================================
         //  2. 核心功能
         // ==========================================
@@ -218,7 +231,61 @@
             document.getElementById('errorActions').classList.remove('hidden');
         }
 
-        // --- 刷新時間軸 (隱藏已完成) ---
+        // --- 產生小時與分鐘選項 ---
+        function populateTimeSelects() {
+            const hourSelects = ['estStartHour', 'estEndHour', 'modalActStartHour', 'modalActEndHour'];
+            const minSelects = ['estStartMin', 'estEndMin', 'modalActStartMin', 'modalActEndMin'];
+
+            // 00-23 小時
+            const hours = [];
+            for(let i=0; i<24; i++) {
+                const val = i.toString().padStart(2, '0');
+                hours.push(`<option value="${val}">${val}</option>`);
+            }
+            hourSelects.forEach(id => {
+                const el = document.getElementById(id);
+                if(el) el.innerHTML = hours.join('');
+            });
+
+            // 00-59 分鐘
+            const mins = [];
+            for(let i=0; i<60; i+=1) { // 這裡每1分鐘一跳，也可以改成 i+=5
+                const val = i.toString().padStart(2, '0');
+                mins.push(`<option value="${val}">${val}</option>`);
+            }
+            minSelects.forEach(id => {
+                const el = document.getElementById(id);
+                if(el) el.innerHTML = mins.join('');
+            });
+        }
+
+        // --- 組合時間字串 (Date + H + M) -> ISO String ---
+        function combineDateTime(dateId, hourId, minId) {
+            const date = document.getElementById(dateId).value;
+            const hour = document.getElementById(hourId).value;
+            const min = document.getElementById(minId).value;
+            if(!date || !hour || !min) return null;
+            return `${date} ${hour}:${min}`; // 回傳 "YYYY-MM-DD HH:mm"
+        }
+
+        // --- 拆解時間字串填入欄位 ---
+        function fillDateTimeFields(isoStr, dateId, hourId, minId) {
+            if(!isoStr) {
+                // 清空
+                document.getElementById(dateId)._flatpickr.clear();
+                document.getElementById(hourId).value = '08'; // 預設 08
+                document.getElementById(minId).value = '00';
+                return;
+            }
+            const m = moment(isoStr);
+            if(m.isValid()) {
+                document.getElementById(dateId)._flatpickr.setDate(m.format('YYYY-MM-DD'));
+                document.getElementById(hourId).value = m.format('HH');
+                document.getElementById(minId).value = m.format('mm');
+            }
+        }
+
+        // --- 刷新時間軸 ---
         function refreshTimelineData() {
             if(!groups || !items) return;
             groups.clear();
@@ -253,12 +320,10 @@
             });
             
             const activeJobs = jobs.filter(j => j.status !== 'completed');
-            if(activeJobs.length > 0) {
-                timeline.fit(); 
-            }
+            if(activeJobs.length > 0) timeline.fit(); 
         }
 
-        // --- 渲染表格 (重點修改處) ---
+        // --- 渲染表格 ---
         function renderTable() {
             const activeTbody = document.getElementById('jobTableBody');
             const completedTbody = document.getElementById('completedJobTableBody');
@@ -272,7 +337,6 @@
                 const isCompleted = job.status === 'completed';
                 const tr = document.createElement('tr');
                 
-                // 1. 第一欄：主要動作 (完成 / 還原)
                 let mainActionHtml = '';
                 if (isCompleted) {
                     mainActionHtml = `
@@ -281,7 +345,6 @@
                         </button>
                     `;
                 } else {
-                    // 放大完成按鈕
                     mainActionHtml = `
                         <button onclick="openCompleteModal(${job.id})" class="text-white bg-green-600 hover:bg-green-700 px-5 py-2 rounded text-sm font-bold shadow-md transform hover:scale-105 transition-all">
                             ✅ 完成
@@ -289,7 +352,6 @@
                     `;
                 }
 
-                // 2. 最後一欄：管理動作 (編輯 / 刪除)
                 let manageHtml = `
                     <div class="flex space-x-2">
                         <button onclick="loadJobToEdit(${job.id})" class="text-indigo-600 hover:text-indigo-900 bg-indigo-50 px-2 py-1 rounded text-xs border border-indigo-100">編輯</button>
@@ -298,7 +360,8 @@
                 `;
 
                 tr.innerHTML = `
-                    <td class="px-3 py-4 whitespace-nowrap">${mainActionHtml}</td> <td class="px-3 py-4 font-medium text-gray-900 ${isCompleted ? 'line-through text-gray-400' : ''}">${job.title}</td>
+                    <td class="px-3 py-4 whitespace-nowrap">${mainActionHtml}</td>
+                    <td class="px-3 py-4 font-medium text-gray-900 ${isCompleted ? 'line-through text-gray-400' : ''}">${job.title}</td>
                     <td class="px-3 py-4 text-gray-500 max-w-xs truncate" title="${job.content}">${job.content}</td>
                     <td class="px-3 py-4 text-gray-500 text-xs">
                         ${formatDate(job.estStart)}<br>↓<br>${formatDate(job.estEnd)}
@@ -309,7 +372,8 @@
                           '<span class="text-gray-300">待填寫</span>'}
                     </td>
                     <td class="px-3 py-4 text-gray-500 text-xs">${job.remarks}</td>
-                    <td class="px-3 py-4 whitespace-nowrap">${manageHtml}</td> `;
+                    <td class="px-3 py-4 whitespace-nowrap">${manageHtml}</td>
+                `;
 
                 if (isCompleted) {
                     completedTbody.appendChild(tr);
@@ -326,11 +390,12 @@
 
             document.getElementById('completeJobId').value = id;
             
-            const defaultStart = job.actStart ? job.actStart : job.estStart;
-            const defaultEnd = job.actEnd ? job.actEnd : job.estEnd;
+            // 預設帶入預計時間 (如果已有實際時間則帶入實際時間)
+            const targetStart = job.actStart ? job.actStart : job.estStart;
+            const targetEnd = job.actEnd ? job.actEnd : job.estEnd;
 
-            fpModalStart.setDate(defaultStart);
-            fpModalEnd.setDate(defaultEnd);
+            fillDateTimeFields(targetStart, 'modalActStartDate', 'modalActStartHour', 'modalActStartMin');
+            fillDateTimeFields(targetEnd, 'modalActEndDate', 'modalActEndHour', 'modalActEndMin');
 
             document.getElementById('completeModalOverlay').style.display = 'flex';
         }
@@ -341,11 +406,12 @@
 
         function confirmComplete() {
             const id = parseInt(document.getElementById('completeJobId').value);
-            const actStart = document.getElementById('modalActStart').value;
-            const actEnd = document.getElementById('modalActEnd').value;
+            // 讀取分欄欄位
+            const actStart = combineDateTime('modalActStartDate', 'modalActStartHour', 'modalActStartMin');
+            const actEnd = combineDateTime('modalActEndDate', 'modalActEndHour', 'modalActEndMin');
 
             if(!actStart || !actEnd) {
-                alert("請填寫實際開始與完成時間");
+                alert("請完整填寫日期與時間");
                 return;
             }
 
@@ -416,22 +482,13 @@
             });
         }
 
-        function initPickers() {
-            const commonConfig = {
-                enableTime: true,
-                dateFormat: "Y-m-d H:i",
-                time_24hr: true,
+        // --- 初始化 Flatpickr (僅日期) ---
+        function initDatePickers() {
+            flatpickr(".flatpickr-date", {
+                dateFormat: "Y-m-d",
                 locale: "zh_tw",
-                minuteIncrement: 10
-            };
-
-            fpEstStart = flatpickr("#estStart", commonConfig);
-            fpEstEnd   = flatpickr("#estEnd",   commonConfig);
-            fpActStart = flatpickr("#actStart", commonConfig);
-            fpActEnd   = flatpickr("#actEnd",   commonConfig);
-
-            fpModalStart = flatpickr("#modalActStart", commonConfig);
-            fpModalEnd   = flatpickr("#modalActEnd",   commonConfig);
+                disableMobile: "true" // 強制在手機上也用日曆介面
+            });
         }
 
         function updateJobFromTimeline(item) {
@@ -468,10 +525,14 @@
             const idInput = document.getElementById('editJobId').value;
             const title = document.getElementById('jobTitle').value;
             const content = document.getElementById('jobContent').value;
-            const estStart = document.getElementById('estStart').value;
-            const estEnd = document.getElementById('estEnd').value;
-            const actStart = document.getElementById('actStart').value;
-            const actEnd = document.getElementById('actEnd').value;
+            
+            // 讀取分欄資料並組合
+            const estStart = combineDateTime('estStartDate', 'estStartHour', 'estStartMin');
+            const estEnd = combineDateTime('estEndDate', 'estEndHour', 'estEndMin');
+            
+            // 這裡 actStart/actEnd 在表單中已移除，如果是新增則為空，如果是編輯需保留原值
+            // 我們會在下方處理
+
             const remarks = document.getElementById('remarks').value;
 
             if (!title || !estStart || !estEnd) {
@@ -483,18 +544,27 @@
                 return;
             }
 
+            // 準備新資料物件
             const jobData = {
                 id: idInput ? parseInt(idInput) : Date.now(),
-                title, content, estStart, estEnd, actStart, actEnd, remarks,
-                status: 'active' 
+                title, content, estStart, estEnd, remarks,
+                status: 'active', // 預設狀態
+                actStart: '', // 預設空
+                actEnd: ''
             };
 
             let newJobs = [...jobs];
             if (idInput) {
                 const index = newJobs.findIndex(j => j.id == idInput);
                 if (index !== -1) {
-                    const oldStatus = newJobs[index].status || 'active';
-                    newJobs[index] = { ...jobData, status: oldStatus };
+                    // 編輯模式：需保留原本的 status 和 actStart/actEnd (因為表單沒這欄位了)
+                    const oldJob = newJobs[index];
+                    newJobs[index] = { 
+                        ...jobData, 
+                        status: oldJob.status,
+                        actStart: oldJob.actStart,
+                        actEnd: oldJob.actEnd
+                    };
                 }
             } else {
                 newJobs.push(jobData);
@@ -512,11 +582,10 @@
             document.getElementById('jobTitle').value = job.title;
             document.getElementById('jobContent').value = job.content;
             
-            fpEstStart.setDate(job.estStart);
-            fpEstEnd.setDate(job.estEnd);
-            fpActStart.setDate(job.actStart || '');
-            fpActEnd.setDate(job.actEnd || '');
-
+            // 填入分欄時間
+            fillDateTimeFields(job.estStart, 'estStartDate', 'estStartHour', 'estStartMin');
+            fillDateTimeFields(job.estEnd, 'estEndDate', 'estEndHour', 'estEndMin');
+            
             document.getElementById('remarks').value = job.remarks;
 
             document.getElementById('formTitle').innerText = "✏️ 修改工作項目";
@@ -573,10 +642,14 @@
         
         function setDefaultTimes() {
             const today = moment().format('YYYY-MM-DD');
-            fpEstStart.setDate(`${today} 08:00`);
-            fpEstEnd.setDate(`${today} 17:00`);
-            fpActStart.clear();
-            fpActEnd.clear();
+            // 設置 Flatpickr 日期
+            document.getElementById('estStartDate')._flatpickr.setDate(today);
+            document.getElementById('estEndDate')._flatpickr.setDate(today);
+            // 設置選單時間
+            document.getElementById('estStartHour').value = '08';
+            document.getElementById('estStartMin').value = '00';
+            document.getElementById('estEndHour').value = '17';
+            document.getElementById('estEndMin').value = '00';
         }
 
         // ==========================================
@@ -585,7 +658,8 @@
         document.addEventListener('DOMContentLoaded', function() {
             moment.locale('zh-tw');
             initTimeline();
-            initPickers(); 
+            populateTimeSelects(); // 產生下拉選項
+            initDatePickers();     // 啟用日期選擇器
             setDefaultTimes();
             
             loadingTimeout = setTimeout(() => {
